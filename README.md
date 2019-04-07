@@ -30,6 +30,7 @@ one important feature of the `ip` command is that you can shorten things, instea
 Lets see the ip addresses assigned to these interfaces:
 
 ```
+ip a
 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
     inet 127.0.0.1/8 scope host lo
@@ -342,12 +343,13 @@ ip l
     link/ether 52:54:00:8f:55:01 brd ff:ff:ff:ff:ff:ff
 ```
 
-dummy is not here, and we don't have the namespace anymore. Now so this is interesting right, we get rid of dummy, by deleting the namespace he lived in. I'm not 100% convinced that dummy wend down as he supposed to be, but at least we don't have a way to reach him anymore, I advise to delete the interfaces before you delete the namespaces, but it is just because I don't know for sure that those are freed properly just because we deleted their home. (Anyone?)
+dummy is not here, and we don't have the namespace anymore. Now so this is interesting right, we get rid of dummy, by deleting the namespace he lived in. I'm not 100% convinced that dummy went down as he supposed to be, but at least we don't have a way to reach him anymore, I advise to delete the interfaces before you delete the namespaces, but it is just because I don't know for sure that those are freed properly just because we deleted their home. (Anyone?)
 
 Okay, so far we had to separated namespaces, not much of a fun, we want to build some real life like stuff right? 
 
 Lets learn about VETH pairs.
 
+## VETH Pairs
 A VETH pair, as the name kind of reveals already, means two interfaces, and they are magically connected in the subspace. How it works? You drop anything into one of them, and it will fall out on the other end. Virtual Ethernet? (to confirm) It is like a network cable with two ends.
 
 Lets create one:
@@ -378,7 +380,7 @@ Very good, as you can see the name kinda tries to help, shows which is the "othe
 
 Any idea how this can be useful? 
 
-## Exercise: Connect namespaces with VETH pairs
+### Exercise: Connect namespaces with VETH pairs
 Before I show, try to do this now:
  - Create a VETH pair
  - Create a netns
@@ -390,4 +392,181 @@ Before I show, try to do this now:
 
  In other words, lets connect two namespaces with a VETH pair, which you can think about as two Routers being connected with a cable, do you start to see the possibilities here?
 
- <TODO>
+ Hopefully you did the exercise, otherwise if you just veeery veeery lazy copy paste this one into you terminal - NOTE: Never copy paste anything into your terminal without really understanding and checking what happens there... 
+
+ ```bash
+ sudo ip netns add test
+ sudo ip l add name test1 type veth peer name test2
+ sudo ip l s test2 netns test
+ sudo ip a a 10.0.0.1/24 dev test1
+ sudo ip l s test1 up
+ sudo ip netns exec test ip a a 10.0.0.2/24 dev test2
+ sudo ip netns exec test ip l s test2 up
+ ```
+
+ Couple of things to observer here, one is that you can name all of the interfaces when you create a veth, the other that the "link" status of ta veth pair will be down until you setup both of them up.
+
+ Go ahead and ping 10.0.0.2:
+
+```bash
+ping 10.0.0.2
+PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
+64 bytes from 10.0.0.2: icmp_seq=1 ttl=64 time=0.095 ms
+64 bytes from 10.0.0.2: icmp_seq=2 ttl=64 time=0.069 ms
+^C
+--- 10.0.0.2 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 55ms
+rtt min/avg/max/mdev = 0.069/0.082/0.095/0.013 ms
+``` 
+
+So easy. For the sake of fun, I guess you connected to the internet now.
+From our test namespace you won't be able to reach the internet. Straight right? If not really, lets check the routing table of the test netns:
+
+```bash
+sudo ip netns exec test ip r
+10.0.0.0/24 dev test2 proto kernel scope link src 10.0.0.2 
+```
+
+No default GW, nothing else but the route for the network address we added to the interface. 
+
+In the next chapter we will setup a NAT GW on our default namespace, so we will setup something like your home router - which connect you to the Internet. Our Default namespace will act as a router doing NAT translation towards the default interface - say so WAN, and the VETH pair will act as a cable plugged into your LAN side, and the interface in the test namespace will be our "computer". I know I know this is super simplified and so on, but this really works just as your router...
+
+## IPTABLES - Masquared - NAT
+Yet an other tool to master - if you aim to be a linux network expert - iptables. IPTables is the name of the ip filtering capacity of the kernel (anyone, is this ~ precise?). So with setting up rules, you can basically configure a firewall, and setup NAT - Network Address Translation - between two network. You can do way - way more, but this will push your iptables experience a bit forward.
+
+There are tons and tons of good descriptions and exercises online about iptables, and how it really works behind and so on, really not my job to tell you. But lets get on with the basics. 
+
+List the existing rules:
+
+```
+sudo iptables -S 
+sudo iptables -S
+-P INPUT ACCEPT
+-P FORWARD ACCEPT
+-P OUTPUT ACCEPT
+-N FORWARD_IN_ZONES
+-N FORWARD_IN_ZONES_SOURCE
+-N FORWARD_OUT_ZONES
+-N FORWARD_OUT_ZONES_SOURCE
+-N FORWARD_direct
+-N FWDI_FedoraWorkstation
+-N FWDI_FedoraWorkstation_allow
+-N FWDI_FedoraWorkstation_deny
+-N FWDI_FedoraWorkstation_log
+-N FWDO_FedoraWorkstation
+-N FWDO_FedoraWorkstation_allow
+-N FWDO_FedoraWorkstation_deny
+-N FWDO_FedoraWorkstation_log
+-N INPUT_ZONES
+-N INPUT_ZONES_SOURCE
+-N INPUT_direct
+-N IN_FedoraWorkstation
+-N IN_FedoraWorkstation_allow
+-N IN_FedoraWorkstation_deny
+-N IN_FedoraWorkstation_log
+-N OUTPUT_direct
+-A INPUT -i virbr0 -p udp -m udp --dport 53 -j ACCEPT
+-A INPUT -i virbr0 -p tcp -m tcp --dport 53 -j ACCEPT
+-A INPUT -i virbr0 -p udp -m udp --dport 67 -j ACCEPT
+-A INPUT -i virbr0 -p tcp -m tcp --dport 67 -j ACCEPT
+-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -j INPUT_direct
+-A INPUT -j INPUT_ZONES_SOURCE
+-A INPUT -j INPUT_ZONES
+-A INPUT -m conntrack --ctstate INVALID -j DROP
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A FORWARD -d 192.168.122.0/24 -o virbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A FORWARD -s 192.168.122.0/24 -i virbr0 -j ACCEPT
+-A FORWARD -i virbr0 -o virbr0 -j ACCEPT
+-A FORWARD -o virbr0 -j REJECT --reject-with icmp-port-unreachable
+-A FORWARD -i virbr0 -j REJECT --reject-with icmp-port-unreachable
+-A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A FORWARD -i lo -j ACCEPT
+-A FORWARD -j FORWARD_direct
+-A FORWARD -j FORWARD_IN_ZONES_SOURCE
+-A FORWARD -j FORWARD_IN_ZONES
+-A FORWARD -j FORWARD_OUT_ZONES_SOURCE
+-A FORWARD -j FORWARD_OUT_ZONES
+-A FORWARD -m conntrack --ctstate INVALID -j DROP
+-A FORWARD -j REJECT --reject-with icmp-host-prohibited
+-A OUTPUT -o virbr0 -p udp -m udp --dport 68 -j ACCEPT
+-A OUTPUT -j OUTPUT_direct
+-A FORWARD_IN_ZONES -g FWDI_FedoraWorkstation
+-A FORWARD_OUT_ZONES -g FWDO_FedoraWorkstation
+-A FWDI_FedoraWorkstation -j FWDI_FedoraWorkstation_log
+-A FWDI_FedoraWorkstation -j FWDI_FedoraWorkstation_deny
+-A FWDI_FedoraWorkstation -j FWDI_FedoraWorkstation_allow
+-A FWDI_FedoraWorkstation -p icmp -j ACCEPT
+-A FWDO_FedoraWorkstation -j FWDO_FedoraWorkstation_log
+-A FWDO_FedoraWorkstation -j FWDO_FedoraWorkstation_deny
+-A FWDO_FedoraWorkstation -j FWDO_FedoraWorkstation_allow
+-A INPUT_ZONES -g IN_FedoraWorkstation
+-A IN_FedoraWorkstation -j IN_FedoraWorkstation_log
+-A IN_FedoraWorkstation -j IN_FedoraWorkstation_deny
+-A IN_FedoraWorkstation -j IN_FedoraWorkstation_allow
+-A IN_FedoraWorkstation -p icmp -j ACCEPT
+-A IN_FedoraWorkstation_allow -p tcp -m tcp --dport 22 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+-A IN_FedoraWorkstation_allow -p udp -m udp --dport 137 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+-A IN_FedoraWorkstation_allow -p udp -m udp --dport 138 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+-A IN_FedoraWorkstation_allow -d 224.0.0.251/32 -p udp -m udp --dport 5353 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+-A IN_FedoraWorkstation_allow -p udp -m udp --dport 1025:65535 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+-A IN_FedoraWorkstation_allow -p tcp -m tcp --dport 1025:65535 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+```
+
+Now if you see something like this - than your linux is running a firewall service for you, which may interfer with everything we try to learn here.
+
+Very first thing to do is to turn this down for the time being.
+
+Everything you will see here only works for Fedora, may work for other linuxes, and definitelly won't work on Ubuntu or Debian.
+
+```bash
+sudo systemctl stop firewalld
+```
+
+This will stop your firewalld service - it will restart automagically at the next reboot.
+
+Check the iptable rules.
+
+```bash
+sudo iptables -S
+-P INPUT ACCEPT
+-P FORWARD ACCEPT
+-P OUTPUT ACCEPT
+```
+
+If you see this, your system is nice, and did flush all the rules when you stopped the firewall. Otherwise you may need to flush them by yourself:
+
+```bash
+sudo iptables -F
+```
+
+Now hopefully you did not run that command on a production server - as it will drop your rules, and likely break a lots of things on a busy prod server. - if it is configured at all.
+
+What do we see here is we have 3 chains, named INPUT, FORWARD and OUTPUT. Packages we receive first travel to INPUT chain, if we forward them they travel via FORWARD, and finally everything our computer sends out finishes up in OUTPUT.
+
+You will see that the situation is more complicated, but for now live with this version.
+Note: you can introduce new chains and so on.
+
+We put rules into these chains. And they evaluated against the packages in orders from top to bottom.
+
+Lets see an easy example. Block our ping from 10.0.0.2.
+
+First test it is working:
+
+```
+sudo ip netns exec test ping 10.0.0.1
+PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data.
+64 bytes from 10.0.0.1: icmp_seq=1 ttl=64 time=0.040 ms
+64 bytes from 10.0.0.1: icmp_seq=2 ttl=64 time=0.059 ms
+^C
+--- 10.0.0.1 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 62ms
+rtt min/avg/max/mdev = 0.040/0.049/0.059/0.011 ms
+```
+
+Hopefully same for you.
+
+Now lets block it.  
+
+... and story will go on from here kids.
