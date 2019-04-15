@@ -569,4 +569,110 @@ Hopefully same for you.
 
 Now lets block it.  
 
-... and story will go on from here kids.
+```bash
+sudo iptables -A INPUT -p icmp -s 10.0.0.2 -j DROP
+```
+
+And try to ping now:
+
+```
+sudo ip netns exec test ping 10.0.0.1
+PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data.
+^C
+--- 10.0.0.1 ping statistics ---
+5 packets transmitted, 0 received, 100% packet loss, time 98ms
+```
+
+Just as we wanted. Lets see what we have done?
+
+```
+sudo iptables
+ -A INPUT #So the new rule is for the INPUT chain
+ -p icmp  #The protocol is icmp, if you don't know what is that, gooogle now.
+ -s 10.0.0.2 #The source ip is 10.0.0.2
+ -j DROP  #Jump to DROP "chain" (anyone is this right?), which means we just drop the package
+```
+
+in human words, we setup a rule to drop all icmp packages from 10.0.0.2. Perfect right?
+It is not visible from here, but we have multiple tables too, if not defined we talk about the default table. 
+Now what we would like to do, is to remove this example rule first:
+
+```
+sudo iptables -D INPUT -p icmp -s 10.0.0.2 -j DROP
+sudo ip netns exec test ping 10.0.0.1
+PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data.
+64 bytes from 10.0.0.1: icmp_seq=1 ttl=64 time=0.025 ms
+64 bytes from 10.0.0.1: icmp_seq=2 ttl=64 time=0.066 ms
+```
+
+Perfect, works as expected. Now you learnt how to delete a rule.
+
+Lets proceed something more advanced, iptables can do NAT for us. Lets setup a simple NAT rule, packages coming from test namespace shall be forwarded to the Internet. iptables is stateful, so our reply packages will find their ways back too. (is this really true or only for NAT?)
+
+```bash
+sudo iptables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE
+```
+
+Lets see if this did the magic?
+
+```bash
+sudo ip netns exec test ping 8.8.8.8
+connect: Network is unreachable
+```
+
+Nope, no internet yet (if you don't know 8.8.8.8 is a DNS server of google)
+What is missing? -> try to find out before you read on :)
+
+
+
+So ofcourse we haven't fixed the routing table of the test namespace, there is no default route or gateway defined. The iptables command above setup NAT towards my main interface, but the namespace does not know about this, lets add the missing route:
+
+```bash
+sudo ip netns exec test ip route add 0.0.0.0/0 dev test2 via 10.0.0.1
+```
+
+Check the routing table now:
+
+```bash
+sudo ip netns exec test ip route
+default via 10.0.0.1 dev test2 
+10.0.0.0/24 dev test2 proto kernel scope link src 10.0.0.2 
+```
+
+Great we have a default route with a gateway defined. Lets see if the ping works now...
+
+```bash
+sudo ip netns exec test ping 8.8.8.8
+PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.
+64 bytes from 8.8.8.8: icmp_seq=1 ttl=120 time=51.9 ms
+64 bytes from 8.8.8.8: icmp_seq=2 ttl=120 time=41.8 ms
+64 bytes from 8.8.8.8: icmp_seq=3 ttl=120 time=50.9 ms
+64 bytes from 8.8.8.8: icmp_seq=4 ttl=120 time=48.6 ms
+64 bytes from 8.8.8.8: icmp_seq=5 ttl=120 time=46.2 ms
+^C
+--- 8.8.8.8 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 10ms
+rtt min/avg/max/mdev = 41.789/47.890/51.909/3.629 ms
+```
+
+Worked for me, may not work for you, one more important aspect to check if the port forwarding is enabled at all in the kernel settings, lets take a peak:
+
+```bash
+sysctl -a | grep ip_forward
+net.ipv4.ip_forward = 1
+net.ipv4.ip_forward_update_priority = 1
+net.ipv4.ip_forward_use_pmtu = 0
+```
+
+If you see the ipv4.ip_forward = 1 you good to go, otherwise you want to setup it, do a google search about sysctl and ip_forwarding to learn how to mess with these settings.
+
+All in all mission is accomplished, but we are far from secure and we will do now NAT for all the interfaces, not really a good habit, so please do some reasearch, add rules like -A FORWARD -s x.x.x.x/x -i <namespace interface> -o <output interface> -J ACCEPT, and change the default behaviour to "DROP" with -t nat -P POSTROUTING DROP. **NOTE**: Be careful with drop if you work on a remote machine over SSH, you can easily lock yourself out ;)
+
+Sorry for not giving more on iptables but that's a book of its own, and we have maaany soo good books on it. Do a favor to yourself and get one.
+
+## Bridges
+
+So in the next time, we will check how to connect two different namespace via a bridge, which is a L2 connection between two or more interfaces!
+
+Stay tunned :)
+
