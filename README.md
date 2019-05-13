@@ -103,7 +103,7 @@ PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.
 
 (Little side note, hopefully you have some idea what PING is, if not it is really time to do a search, in a nutshell it uses ICMP protocol to check connection between two network points. (ICMP is on L3) -> and if you don't know the network layers, really good time to search OSI Layers too.)
 
-As expected, we can't don't get answer anymore, as our interface is down, just to confirm:
+As expected, we don't get answer anymore, as our interface is down, just to confirm:
 
 ```
 ip l l lo
@@ -439,7 +439,6 @@ There are tons and tons of good descriptions and exercises online about iptables
 List the existing rules:
 
 ```
-sudo iptables -S 
 sudo iptables -S
 -P INPUT ACCEPT
 -P FORWARD ACCEPT
